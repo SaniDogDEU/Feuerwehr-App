@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Einsatzsimulation – Straßenrouting & Animation</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+html, body { height: 100%; margin:0; padding:0; font-family: 'Roboto', sans-serif; }
+body { display:flex; flex-direction:column; }
+#header { display:flex; justify-content: space-between; align-items: center; padding: 15px 30px; background:#d32f2f; color:white; box-shadow:0 4px 10px rgba(0,0,0,0.2); }
+#header h1 { font-size: 1.8em; }
+#header button { background:white; color:#d32f2f; border:none; padding: 10px 20px; border-radius:10px; cursor:pointer; font-weight:bold; transition:0.2s; }
+#header button:hover { background:#ffebee; }
+#controls { padding: 10px; background: #f0f0f0; text-align: center; }
+#controls button { margin: 5px; padding: 10px 20px; font-size: 16px; border-radius: 10px; border:none; cursor:pointer; transition:0.2s; }
+#controls button:hover { transform: translateY(-2px); box-shadow:0 4px 10px rgba(0,0,0,0.2); }
+#map { flex:1; width: 100%; }
+</style>
+</head>
+<body>
+<div id="header">
+<h1>Einsatzsimulation</h1>
+<button onclick="window.location.href='index.html'">🏠 Startseite</button>
+</div>
+<div id="controls">
+<button onclick="neuerEinsatz()">Neuen Einsatz generieren</button>
+<button onclick="resetEinsaetze()">Alle Einsätze zurücksetzen</button>
+</div>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+// Karte initialisieren
+var map = L.map('map').setView([50.3481, 7.3897], 14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+// Feuerwehrhaus
+var feuerwehrhaus = [50.3481, 7.3897];
+var fwHausMarker = L.marker(feuerwehrhaus, {
+    icon: L.divIcon({ html:`<div style="background-color:#d32f2f;color:white;width:50px;height:50px;line-height:50px;border-radius:50%;text-align:center;font-weight:bold;border:2px solid black;">FW</div>`,
+    className:'', iconSize:[50,50], iconAnchor:[25,25]})
+}).addTo(map).bindPopup("🚒 Feuerwehrhaus");
+
+// Einsatzorte
+var einsatzorte = [
+    {name:"B1 - Müllcontainerbrand", coords:[50.3483,7.3895], status:"bereit", details:"Kleiner Containerbrand", art:"Brand"},
+    {name:"B2 - Wohnhausbrand", coords:[50.3486,7.3902], status:"bereit", details:"Wohnhausbrand, 2 Bewohner evakuiert", art:"Brand"},
+    {name:"B3 - Waldbrand", coords:[50.3550,7.3840], status:"bereit", details:"Kleine Waldfläche am Waldrand", art:"Brand"},
+    {name:"B4 - Industriebrand", coords:[50.3469,7.3945], status:"bereit", details:"Industriegebiet", art:"Brand"},
+    {name:"G1 - Ölspur", coords:[50.3475,7.3890], status:"bereit", details:"Ölspur Hauptstraße", art:"Unfall"},
+    {name:"G2 - Chemikalienaustritt", coords:[50.3470,7.3920], status:"bereit", details:"Chemikalienpanne", art:"Unfall"},
+    {name:"H1 - Person gestürzt", coords:[50.3482,7.3875], status:"bereit", details:"Person gestürzt im Ortszentrum", art:"Rettung"}
+];
+
+var fahrzeugeListe = [
+    {name:"MZF 1", farbe:"#ff5722"},
+    {name:"MTF", farbe:"#2196f3"},
+    {name:"GW-Hund", farbe:"#4caf50"},
+    {name:"HLF 10", farbe:"#fbc02d"},
+    {name:"LF 6/8", farbe:"#9c27b0"}
+];
+
+var aktiveFahrzeuge = [];
+var aktivePolylines = [];
+var aktiveEinsaetze = [];
+
+function markerFarbe(einsatz){
+    switch(einsatz.art){ case "Brand": return 'orange'; case "Unfall": return 'blue'; case "Rettung": return 'green'; default: return 'gray'; }
+}
+
+// Einsatz generieren
+function neuerEinsatz(){
+    var verfügbar = einsatzorte.filter(e=>!aktiveEinsaetze.includes(e));
+    if(verfügbar.length===0){ alert("Alle Einsätze aktiv!"); return; }
+    var zufall = verfügbar[Math.floor(Math.random()*verfügbar.length)];
+    aktiveEinsaetze.push(zufall);
+
+    var marker = L.circleMarker(zufall.coords, {
+        color:markerFarbe(zufall), radius:12, fillOpacity:0.8, weight:2
+    }).addTo(map);
+
+    marker.bindPopup(`<div style="font-weight:bold;">${zufall.name}</div>
+        Status: <span id="${zufall.name.replace(/\s/g,'')}Status">${zufall.status}</span><br>
+        Details: ${zufall.details}<br>
+        <button onclick="alarm('${zufall.name.replace(/\s/g,'')}')">🚨 Alarm auslösen</button>`);
+
+    map.fitBounds(aktiveEinsaetze.map(e=>e.coords), {padding:[50,50]});
+}
+
+// Alarm popup
+function alarm(einsatzId){
+    var einsatz = aktiveEinsaetze.find(e=>e.name.replace(/\s/g,'')===einsatzId);
+    if(!einsatz) return;
+
+    var popupHtml = "<b>Fahrzeuge wählen:</b><br>";
+    fahrzeugeListe.forEach((f,i)=>{ popupHtml += `<input type="checkbox" id="fahrzeug${i}" value="${i}"> ${f.name}<br>`; });
+    popupHtml += `<button onclick="fahreFahrzeuge('${einsatzId}')">🚒 Senden</button>`;
+
+    L.popup().setLatLng(einsatz.coords).setContent(popupHtml).openOn(map);
+}
+
+// Animate Marker
+function animateMarker(marker, coords, idx=0){
+    if(idx>=coords.length){
+        aktiveEinsaetze.forEach(e=>{
+            if(e.coords[0]==coords[0][0] && e.coords[1]==coords[0][1]){
+                e.status="erledigt";
+                var statusEl=document.getElementById(e.name.replace(/\s/g,'')+"Status");
+                if(statusEl) statusEl.innerText="erledigt";
+            }
+        });
+        return;
+    }
+    marker.setLatLng(coords[idx]);
+    setTimeout(()=>animateMarker(marker, coords, idx+1), 100);
+}
+
+// Fahrzeuge senden
+function fahreFahrzeuge(einsatzId){
+    var einsatz = aktiveEinsaetze.find(e=>e.name.replace(/\s/g,'')===einsatzId);
+    if(!einsatz) return;
+    einsatz.status="unterwegs";
+
+    var ausgewählt=[];
+    fahrzeugeListe.forEach((f,i)=>{ if(document.getElementById("fahrzeug"+i).checked) ausgewählt.push(f); });
+
+    ausgewählt.forEach(f=>{
+        var icon=L.divIcon({html:`<div style="background-color:${f.farbe};color:white;width:40px;height:40px;line-height:40px;border-radius:50%;text-align:center;font-weight:bold;border:2px solid black;font-size:12px;">${f.name}</div>`, className:'', iconSize:[40,40], iconAnchor:[20,20]});
+        var marker=L.marker(feuerwehrhaus,{icon:icon}).addTo(map);
+        aktiveFahrzeuge.push(marker);
+
+        // Route von OSRM abrufen
+        var url = `https://router.project-osrm.org/route/v1/driving/${feuerwehrhaus[1]},${feuerwehrhaus[0]};${einsatz.coords[1]},${einsatz.coords[0]}?overview=full&geometries=geojson`;
+        fetch(url).then(res=>res.json()).then(data=>{
+            if(!data.routes || data.routes.length==0) return;
+            var coords = data.routes[0].geometry.coordinates.map(c=>[c[1], c[0]]);
+            var poly = L.polyline(coords, {color:f.farbe, weight:4, opacity:0.7}).addTo(map);
+            aktivePolylines.push(poly);
+            animateMarker(marker, coords);
+        });
+    });
+
+    map.closePopup();
+    alert("Fahrzeuge unterwegs!");
+}
+
+// Reset
+function resetEinsaetze(){
+    einsatzorte.forEach(e=>e.status="bereit");
+    aktiveEinsaetze=[];
+
+    aktiveFahrzeuge.forEach(f=>map.removeLayer(f));
+    aktiveFahrzeuge=[];
+
+    aktivePolylines.forEach(p=>map.removeLayer(p));
+    aktivePolylines=[];
+
+    map.eachLayer(layer=>{ if(layer instanceof L.CircleMarker) map.removeLayer(layer); });
+
+    alert("Alle Einsätze und Fahrzeuge zurückgesetzt!");
+}
